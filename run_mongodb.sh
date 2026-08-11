@@ -286,7 +286,7 @@ run_singularity() {
         local mongod_log="${MONGO_DATA}/mongod.log.$(date +%s)"
 
         nohup singularity exec instance://"${MONGO_NAME}" \
-            /bin/bash -c "mongod --dbpath /data/db --bind_ip 127.0.0.1 --port ${MONGO_PORT}" \
+            /bin/bash -c "mongod --dbpath /data/db --bind_ip 0.0.0.0 --port ${MONGO_PORT}" \
             > "${mongod_log}" 2>&1 &
 
         echo "mongod launched (log: ${mongod_log})"

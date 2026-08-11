@@ -30,6 +30,15 @@ run() {
     fi
 }
 
+cleanup_fasta_mapping() {
+    if [[ -n "${normalized_fasta:-}" ]]; then
+        rm -f -- "$normalized_fasta"
+    fi
+    if [[ "${mapping_ready:-0}" -ne 1 && -n "${header_mapping:-}" ]]; then
+        rm -f -- "$header_mapping"
+    fi
+}
+
 # -----------------------------
 # Defaults
 # -----------------------------
@@ -61,6 +70,7 @@ constraints_dir=""
 script_classic="/app/src/run_classic_model.sh"
 script_new="/app/src/run_new_model.sh"
 script_merging="/app/src/run_merging.sh"
+fasta_mapping_tool="/app/src/container_tools/fasta_id_map.py"
 
 # -----------------------------
 # Usage
@@ -263,6 +273,28 @@ else
     fi
 fi
 
+# Use simple internal identifiers while the bundled scripts run, then restore
+# the complete original FASTA headers in the user-facing prediction files.
+header_mapping=""
+normalized_fasta=""
+mapping_ready=0
+if [[ "$mode" != "merge" ]]; then
+    header_mapping="$outdir/fasta_header_mapping.tsv"
+    normalized_fasta="$outdir/.argot3_normalized.fasta"
+
+    if [[ "$dry_run" -eq 1 ]]; then
+        echo "[DRY-RUN] FASTA headers would be prepared for pipeline processing"
+    else
+        trap cleanup_fasta_mapping EXIT
+        run python3 "$fasta_mapping_tool" encode \
+            --input "$fasta" \
+            --output "$normalized_fasta" \
+            --mapping "$header_mapping"
+        mapping_ready=1
+        fasta="$normalized_fasta"
+    fi
+fi
+
 # -----------------------------
 # Commands
 # -----------------------------
@@ -367,4 +399,26 @@ else  # all
     fi
 
     run "${merge_cmd[@]}"
+fi
+
+if [[ "$mode" != "merge" && "$dry_run" -eq 0 ]]; then
+    prediction_files=()
+    case "$mode" in
+        classic) search_roots=("$classic_out/predictions") ;;
+        new)     search_roots=("$new_out/predictions") ;;
+        both)    search_roots=("$classic_out/predictions" "$new_out/predictions") ;;
+        all)     search_roots=("$classic_out/predictions" "$new_out/predictions" "$merged_out") ;;
+    esac
+
+    while IFS= read -r -d '' prediction_file; do
+        prediction_files+=("$prediction_file")
+    done < <(find "${search_roots[@]}" -type f -name '*.tsv' -print0)
+
+    if [[ ${#prediction_files[@]} -gt 0 ]]; then
+        run python3 "$fasta_mapping_tool" restore \
+            --mapping "$header_mapping" \
+            "${prediction_files[@]}"
+    fi
+    rm -f -- "$normalized_fasta"
+    normalized_fasta=""
 fi

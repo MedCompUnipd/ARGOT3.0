@@ -26,7 +26,7 @@ if __name__ == '__main__':
         write = False
         for line in fp:
             if line.startswith('>'):
-                prot = line.split('|')[1]
+                prot = line[1:].split(maxsplit=1)[0]
                 write = True if prot in prots else False
             if write:
                 out.write(line)

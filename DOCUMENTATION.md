@@ -8,6 +8,20 @@ ARGOT3 is a containerized pipeline for protein function annotation using Gene On
 
 ---
 
+## Resource Bundle
+
+Download the resource bundle from [Zenodo (DOI: 10.5281/zenodo.21820416)](https://doi.org/10.5281/zenodo.21820416), then extract it into the desired parent directory:
+
+```
+tar --zstd -xvf argot3_resource_bundle.zst -C /path/to/destination
+```
+
+This creates `/path/to/destination/argot3_resource_bundle`, which occupies approximately **236 GB** after extraction. Ensure that the destination filesystem has sufficient free space in addition to the downloaded archive itself.
+
+The extraction command requires a version of `tar` with Zstandard support and the `zstd` executable. If `tar` does not recognize `--zstd`, install or update these tools before extracting the archive.
+
+---
+
 ## Repository Structure
 
 ```
@@ -45,7 +59,8 @@ The resource bundle directory should be structured as follows:
 ```
 argot3_resource_bundle/
 ├── go.owl                      # Gene Ontology file (OWL format)
-├── uniprot_wGO.dmnd            # DIAMOND database                    [classic model]
+├── uniprot_with_go.fasta       # DIAMOND source FASTA                [classic model]
+├── uniprot_with_go.dmnd        # Generated locally with `makedb`     [classic model]
 ├── dump/                       # MongoDB dump directory               [classic model]
 │   └── ARGOT_DB/
 │       ├── annots.bson
@@ -67,15 +82,65 @@ argot3_resource_bundle/
 └── constraints/                # GO taxonomic constraints             [merging, optional]
 ```
 
+The Zenodo resource archive contains `uniprot_with_go.fasta`; `uniprot_with_go.dmnd` is generated locally after unpacking the archive. See **Build the DIAMOND index** below.
+
 The `embeddings/` directory holds the pre-downloaded ESM2 model weights used by `fair-esm` at runtime. Without it, the pipeline will attempt to download ~2.5 GB at runtime. Pass it to the container via `TORCH_HOME` (see examples below).
 
 The `taxonomy/` and `constraints/` directories are only required when running the merging step with taxonomic constraint filtering (`--species`).
 
 ---
 
+## Build the DIAMOND index
+
+The DIAMOND database is intentionally not included in the resource archive and must be generated locally. Build it once after unpacking the archive and before starting MongoDB or running the pipeline.
+
+The resource directory must be writable because `diamond makedb` creates `uniprot_with_go.dmnd` alongside the source FASTA.
+
+If DIAMOND is installed locally, run:
+
+```
+cd /path/to/argot3_resource_bundle
+diamond makedb --in uniprot_with_go.fasta --db uniprot_with_go --threads "$(nproc)"
+```
+
+Alternatively, use the DIAMOND executable included in the ARGOT3 container.
+
+**Docker**
+
+```
+docker run --rm \
+    --entrypoint /app/bin/diamond \
+    -v /path/to/argot3_resource_bundle:/data \
+    argot3 \
+    makedb --in /data/uniprot_with_go.fasta --db /data/uniprot_with_go --threads "$(nproc)"
+```
+
+**Singularity**
+
+```
+singularity exec \
+    --bind /path/to/argot3_resource_bundle:/data \
+    argot3.sif \
+    diamond makedb --in /data/uniprot_with_go.fasta --db /data/uniprot_with_go --threads "$(nproc)"
+```
+
+Verify that the index was created:
+
+```
+ls -lh /path/to/argot3_resource_bundle/uniprot_with_go.dmnd
+```
+
+Pass this generated file to ARGOT3 as `-d /data/uniprot_with_go.dmnd`.
+
+`$(nproc)` uses all CPUs available to the process. Replace it with a fixed value such as `8`, or omit `--threads`, if preferred.
+
+---
+
 ## MongoDB Setup
 
-MongoDB must be running before the pipeline is invoked. Use `run_mongodb.sh` to start a MongoDB instance and optionally restore a dump directory.
+MongoDB must be running before the pipeline is invoked. Use `run_mongodb.sh` to start a MongoDB instance and optionally restore a dump directory. The database name loaded from the dump is `ARGOT_DB` (fixed by the dump contents) and the container or Singularity instance is named `argot-mongodb` (changeable with `-n`). The examples below use both names.
+
+Docker and Singularity both expose this MongoDB instance on all network interfaces, allowing jobs on another node to connect. The instance does not enable authentication, so access must be restricted through the cluster network or firewall.
 
 > **Note:** `run_mongodb.sh` is a host-side script and is not part of the Docker container.
 
@@ -148,6 +213,27 @@ Then re-run `run_mongodb.sh` with `-f`:
 
 > **Note:** `--force` only removes the persistent **data directory** (`~/mongo_data` by default), not the container itself. To reset everything, remove both the container and the data directory.
 
+### Service lifetime and recovery
+
+`run_mongodb.sh` starts MongoDB in the background and returns. The service keeps running after the script exits and after the terminal or SSH session is closed. It is not tied to the shell that started it.
+
+It does **not** come back automatically after a reboot or Docker daemon restart. A cluster scheduler may also terminate it when the allocation ends. Run MongoDB only on a node or allocation where long-running services are permitted, following the policies of the local HPC system.
+
+Stopping the service does not remove its host data directory (`-d`, default `$HOME/mongo_data`), although persistence still depends on the selected filesystem. To bring the service back up, re-run the script with the same runtime, instance name, port, data directory, and other custom options, but omit `-f`. For example, if the defaults were used:
+
+```
+./run_mongodb.sh
+```
+
+This reuses the existing data directory and skips the restore entirely (`No dump provided, skipping restore`). If custom options such as `-r`, `-n`, `-p`, `-d`, or `-i` were used originally, provide the same values when restarting. Only pass `-f` again when the database genuinely needs to be reloaded from the dump, since that repeats the full ~100 GB restore.
+
+> **Singularity:** the instance and the `mongod` process inside it have separate lifetimes. If `singularity instance list` shows `argot-mongodb` but connections are refused, the instance outlived its `mongod`. Re-running the script will report `Instance 'argot-mongodb' already running` and then fail while waiting for MongoDB. Stop the instance and start again:
+>
+> ```
+> singularity instance stop argot-mongodb
+> ./run_mongodb.sh
+> ```
+
 ### Connecting ARGOT3 to MongoDB
 
 The classic model pipeline connects to MongoDB at runtime using the `--mongo-host`, `--mongo-port`, and `--mongo-db` flags passed to `entrypoint.sh`.
@@ -177,6 +263,8 @@ singularity run ... argot3.sif --mode classic \
     --mongo-db ARGOT_DB \
     ...
 ```
+
+If ARGOT3 runs on a different node from MongoDB, set `--mongo-host` to the hostname or IP address of the node running MongoDB instead of `localhost`. Use the port selected with `run_mongodb.sh -p` as `--mongo-port`.
 
 ---
 
@@ -275,6 +363,21 @@ Execution flags:
   -h                     Show this help message and exit
 ```
 
+### FASTA header handling
+
+ARGOT3 accepts complete UTF-8 FASTA headers, including descriptions, pipes, non-ASCII characters, and other content that the bundled model scripts do not normally recognize. User-facing prediction TSVs contain the complete original header text without the leading `>`. The only normalization is that embedded tabs are converted to spaces so they do not create additional TSV columns.
+
+Header restoration is automatic after a successful run. If a pipeline stage fails before that final step, the retained `fasta_header_mapping.tsv` support file can restore any completed prediction TSV manually. The operation is safe to run more than once:
+
+```
+python3 src/container_tools/fasta_id_map.py restore \
+    --mapping /path/to/run/fasta_header_mapping.tsv \
+    /path/to/run/classic/predictions/unpropagated.tsv \
+    /path/to/run/classic/predictions/propagated.tsv
+```
+
+Pass any other existing new-model or merged prediction TSVs as additional file arguments.
+
 ### Examples
 
 All examples below use Docker. For Singularity, apply these substitutions:
@@ -301,7 +404,7 @@ docker run --network host \
     -f /input/proteins.fasta \
     -o /output/run1 \
     -g /data/go.owl \
-    -d /data/uniprot_wGO.dmnd \
+    -d /data/uniprot_with_go.dmnd \
     -t 8 \
     --mongo-host localhost \
     --mongo-db ARGOT_DB
@@ -336,7 +439,7 @@ docker run --gpus all --network host \
     -f /input/proteins.fasta \
     -o /output/run1 \
     -g /data/go.owl \
-    -d /data/uniprot_wGO.dmnd \
+    -d /data/uniprot_with_go.dmnd \
     -t 8 \
     --mongo-host localhost \
     --mongo-db ARGOT_DB \
@@ -368,7 +471,7 @@ docker run --gpus all --network host \
     -f /input/proteins.fasta \
     -o /output/run1 \
     -g /data/go.owl \
-    -d /data/uniprot_wGO.dmnd \
+    -d /data/uniprot_with_go.dmnd \
     -t 8 \
     --mongo-host localhost \
     --mongo-db ARGOT_DB \
@@ -402,6 +505,8 @@ When running with `--exec parallel`, each pipeline writes its logs to `<outdir>/
     ├── unpropagated.tsv            # Final unpropagated output
     └── propagated.tsv              # Final propagated output
 ```
+
+At the run-directory root, `fasta_header_mapping.tsv` is retained as a support file for preserving or recovering original FASTA headers. It is created for `classic`, `new`, `both`, and `all` modes.
 
 ### New model (`--mode new`)
 

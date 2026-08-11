@@ -46,13 +46,15 @@ ARGOT3/
 
 ## Requirements
 
-The pipeline uses three separate mount points:
+Modes that process a FASTA file (`classic`, `new`, `both`, and `all`) use three separate mount points:
 
 | Mount | Purpose |
 |-------|---------|
 | `-v /path/to/argot3_resource_bundle:/data` | Resource bundle (databases, weights, embeddings) |
 | `-v /path/to/proteins.fasta:/input/proteins.fasta` | Input FASTA file |
 | `-v /path/to/output:/output` | Output directory |
+
+The `merge` mode uses only the resource and output mounts because it reads predictions from an existing run directory.
 
 The resource bundle directory should be structured as follows:
 
@@ -92,7 +94,7 @@ The `taxonomy/` and `constraints/` directories are only required when running th
 
 ## Build the DIAMOND index
 
-The DIAMOND database is intentionally not included in the resource archive and must be generated locally. Build it once after unpacking the archive and before starting MongoDB or running the pipeline.
+The DIAMOND database is intentionally not included in the resource archive and must be generated locally for modes that include the classic model (`classic`, `both`, and `all`). Build it once after unpacking the archive. It is not required for `new` or `merge`.
 
 The resource directory must be writable because `diamond makedb` creates `uniprot_with_go.dmnd` alongside the source FASTA.
 
@@ -138,7 +140,7 @@ Pass this generated file to ARGOT3 as `-d /data/uniprot_with_go.dmnd`.
 
 ## MongoDB Setup
 
-MongoDB must be running before the pipeline is invoked. Use `run_mongodb.sh` to start a MongoDB instance and optionally restore a dump directory. The database name loaded from the dump is `ARGOT_DB` (fixed by the dump contents) and the container or Singularity instance is named `argot-mongodb` (changeable with `-n`). The examples below use both names.
+MongoDB must be running for modes that include the classic model (`classic`, `both`, and `all`). It is not required for `new` or `merge`. Use `run_mongodb.sh` to start a MongoDB instance and optionally restore a dump directory. The database name loaded from the dump is `ARGOT_DB` (fixed by the dump contents) and the container or Singularity instance is named `argot-mongodb` (changeable with `-n`). The examples below use both names.
 
 Docker and Singularity both expose this MongoDB instance on all network interfaces, allowing jobs on another node to connect. The instance does not enable authentication, so access must be restricted through the cluster network or firewall.
 
@@ -270,17 +272,9 @@ If ARGOT3 runs on a different node from MongoDB, set `--mongo-host` to the hostn
 
 ## ARGOT3 JAR
 
-The Java source code for the ARGOT3 scoring engine is in `src/java/argot3/`. A pre-built JAR is already provided at `bin/Argot3-1.0.jar` and is used by the pipeline — rebuilding is only needed if you modify the Java source.
+The Java source code for the ARGOT3 scoring engine is in `src/java/argot3/`. A pre-built JAR is already provided at `bin/Argot3-1.0.jar` and is used by the pipeline, so rebuilding is only needed if you modify the Java source.
 
-See [`src/java/argot3/README.md`](src/java/argot3/README.md) for full build instructions. In brief, from `src/java/argot3/`:
-
-```
-mvn install:install-file -Dfile=./lib/jgrapht-bundle-1.3.0.jar -DgroupId=org.jgrapht -DartifactId=jgrapht-bundle -Dversion=1.3.0 -Dpackaging=jar
-mvn install:install-file -Dfile=./lib/goUtility-4.0.jar -DgroupId=it.unipd.medicina.medcomp -DartifactId=goUtility -Dversion=4.0 -Dpackaging=jar
-mvn clean install
-```
-
-The JAR is produced in `target/Argot3-1.0.jar`. Copy it to `bin/` to use it with the pipeline.
+See [`src/java/argot3/README.md`](src/java/argot3/README.md) for the required external libraries and Maven build instructions. The rebuilt JAR is created at `src/java/argot3/target/Argot3-1.0.jar`; replace `bin/Argot3-1.0.jar` only if you want the pipeline to use the rebuilt engine.
 
 ---
 
@@ -391,7 +385,7 @@ All examples below use Docker. For Singularity, apply these substitutions:
 | `-e VAR=val` | `--env VAR=val` |
 | `argot3` | `argot3.sif` |
 
-The `-o` argument should point to a **non-existing subdirectory** inside the output mount — the pipeline creates it. This also naturally supports keeping multiple runs under the same output volume (e.g. `/output/run1`, `/output/run2`, ...).
+For `classic`, `new`, `both`, and `all`, the `-o` argument should point to a **non-existing subdirectory** inside the output mount; the pipeline creates it. This supports keeping multiple runs under the same output volume (e.g. `/output/run1`, `/output/run2`, ...). For `merge`, point `-o` to an existing run directory produced by `--mode both`.
 
 Run the classic model:
 ```
@@ -447,7 +441,7 @@ docker run --gpus all --network host \
     -w /data/weights
 ```
 
-Merge outputs from a previous run (point `-o` to the same run directory):
+Merge outputs from a previous `--mode both` run (point `-o` to the same existing run directory):
 ```
 docker run \
     -v /path/to/argot3_resource_bundle:/data \
@@ -515,7 +509,7 @@ At the run-directory root, `fasta_header_mapping.tsv` is retained as a support f
 ├── data/
 │   ├── proteins_list.fasta         # Validated input sequences
 │   ├── proteins_list.txt           # Protein IDs
-│   ├── embeddings/                 # Per-protein TF embeddings (generated at runtime)
+│   ├── embeddings/                 # Per-protein ESM2 embeddings (generated at runtime)
 │   ├── cco_batch.txt               # Cellular Component predictions
 │   ├── mfo_batch.txt               # Molecular Function predictions
 │   ├── bpo_batch.txt               # Biological Process predictions

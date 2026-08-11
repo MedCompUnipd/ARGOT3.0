@@ -49,7 +49,7 @@ singularity build argot3.sif docker-daemon://argot3:latest
 
 ## 3. Build the DIAMOND index
 
-The resource archive contains `uniprot_with_go.fasta`, but not the DIAMOND index. Build it once, directly inside the unpacked resource directory. If DIAMOND is installed locally, run:
+This step is required for modes that include the classic model (`classic`, `both`, and `all`). The resource archive contains `uniprot_with_go.fasta`, but not the DIAMOND index. Build it once, directly inside the unpacked resource directory. If DIAMOND is installed locally, run:
 
 ```
 cd /path/to/argot3_resource_bundle
@@ -81,7 +81,7 @@ This creates `/path/to/argot3_resource_bundle/uniprot_with_go.dmnd`, which is pa
 
 ## 4. Start MongoDB
 
-The script auto-detects Docker or Singularity. Use `-r docker` or `-r singularity` to override. The database name loaded from the dump is `ARGOT_DB` — use this value for `--mongo-db` when running the pipeline. The container or Singularity instance is named `argot-mongodb` — use this name with `docker` or `singularity` commands, or choose a different one with `-n`.
+MongoDB is required for modes that include the classic model (`classic`, `both`, and `all`). It is not required for `new` or `merge`. The script auto-detects Docker or Singularity; use `-r docker` or `-r singularity` to override. The database name loaded from the dump is `ARGOT_DB` — use this value for `--mongo-db` when running the pipeline. The container or Singularity instance is named `argot-mongodb` — use this name with `docker` or `singularity` commands, or choose a different one with `-n`.
 
 ```
 ./run_mongodb.sh -f /path/to/argot3_resource_bundle/dump/
@@ -112,7 +112,7 @@ If ARGOT3 runs on a different node from MongoDB, replace `localhost` in the pipe
 
 ## 5. Run the pipeline
 
-Three volume mounts are required:
+Modes that process a FASTA file (`classic`, `new`, `both`, and `all`) use three volume mounts:
 
 | Mount | Purpose |
 |-------|---------|
@@ -120,7 +120,9 @@ Three volume mounts are required:
 | `/path/to/proteins.fasta` → `/input/proteins.fasta` | Input FASTA |
 | `/path/to/output` → `/output` | Output directory |
 
-The `-o` argument must point to a **non-existing subdirectory** inside the output mount (e.g. `/output/run1`). The pipeline creates it.
+The `merge` mode uses only the resource and output mounts because it reads predictions from an existing run directory.
+
+For `classic`, `new`, `both`, and `all`, the `-o` argument must point to a **non-existing subdirectory** inside the output mount (e.g. `/output/run1`); the pipeline creates it. For `merge`, `-o` must point to an existing run directory containing both classic and new predictions.
 
 ARGOT3 accepts complete UTF-8 FASTA headers and preserves them in user-facing prediction TSVs without the leading `>`. Descriptions, pipes, non-ASCII characters, and other header content are retained. Embedded tabs are converted to spaces so they do not create additional TSV columns.
 
@@ -201,7 +203,7 @@ Use `--mode both` with the same arguments as `--mode all` — it runs both pipel
 
 ### Merge existing outputs
 
-Use this to merge results from a previous `--mode classic` and `--mode new` run, pointing `-o` to the same run directory. **The output directory must contain results from both models** (i.e. it must have been produced by prior `--mode classic` and `--mode new` runs with the same `-o` path).
+Use this to merge results from a previous `--mode both` run, pointing `-o` to the same existing run directory. That directory must contain both `<outdir>/classic/predictions/` and `<outdir>/new/predictions/`.
 
 ```
 docker run \

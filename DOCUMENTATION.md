@@ -367,7 +367,7 @@ Execution flags:
 
 ARGOT3 accepts complete UTF-8 FASTA headers, including descriptions, pipes, non-ASCII characters, and other content that the bundled model scripts do not normally recognize. User-facing prediction TSVs contain the complete original header text without the leading `>`. The only normalization is that embedded tabs are converted to spaces so they do not create additional TSV columns.
 
-Header restoration is automatic after a successful run. If a pipeline stage fails before that final step, the retained `fasta_header_mapping.tsv` support file can restore any completed prediction TSV manually. The operation is safe to run more than once:
+Header restoration is automatic after a successful run. If a pipeline stage fails before that final step, the retained `fasta_header_mapping.tsv` support file can restore any completed prediction TSV manually. Run this recovery command only on prediction files that have not already been restored:
 
 ```
 python3 src/container_tools/fasta_id_map.py restore \

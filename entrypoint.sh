@@ -79,7 +79,7 @@ usage() {
     echo "ARGOT3"
     echo
     echo "Run the ARGOT3 classic model, the new deep learning-based model, or merge their outputs."
-    echo "MongoDB is expected to be running externally (e.g. via Docker Compose)."
+    echo "MongoDB is expected to be running externally, for example via run_mongodb.sh."
     echo
     echo "Usage:"
     echo "  $0 --mode <classic|new|both|merge|all> [options]"
